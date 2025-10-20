@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DCV Viewer</title>
+    <style>
+      html,
+      body,
+      .container,
+      .viewer-wrapper {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: #000;
+      }
+
+      #dcv-display img {
+        display: none !important;
+      }
+
+      #dcv-display canvas {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain;
+      }
+    </style>
+    <script type="text/javascript" src="./dcvjs-umd/dcv.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="viewer-wrapper">
+        <div id="dcv-display" style="width: 100%; height: 100%"></div>
+      </div>
+    </div>
+
+    <script type="text/javascript">
+      // @ts-check
+      // adapted from https://github.com/awslabs/amazon-bedrock-agentcore-samples/blob/74851e6/01-tutorials/05-AgentCore-tools/02-Agent-Core-browser-tool/interactive_tools/browser_viewer.py
+
+      /**
+       * @typedef {{presignedUrl: string; width: number; height: number}} Config
+       *
+       * @typedef {{
+       *   promptCredentials: () => void;
+       *   error: (auth: unknown, error: { code: string; message: string }) => void;
+       *   success: (auth: unknown, authenticationData: Array<{ authToken: string; sessionId: string }>) => void;
+       *   httpExtraSearchParams: () => URLSearchParams;
+       * }} AuthenticationCallbacks
+       *
+       * @typedef {{
+       *   authToken: string;
+       *   baseUrl: string;
+       *   divId: string;
+       *   enableChannels: Array<"clipboard" | "display" | "input" | "audio" | "filestorage">;
+       *   sessionId: string;
+       *   url: string;
+       *   callbacks: {
+       *     displayLayout: (serverWidth: number, serverHeight: number, heads: Array<Monitor>) => void;
+       *     firstFrame: () => void;
+       *     httpExtraSearchParams: () => URLSearchParams;
+       *   };
+       * }} ConnectionConfig
+       *
+       * @typedef {{x: number; y: number; width: number; height: number}} Rect
+       * @typedef {{name: string; primary: boolean; rect: Rect}} Monitor
+       * @typedef {{
+       *   disconnect: () => void;
+       *   enableDisplayQualityUpdates: (boolean) => void;
+       *   requestDisplayLayout: (layout: Monitor[]) => Promise<void>;
+       * }} Connection
+       *
+       * @typedef {{
+       *   authenticate: (url: string, callbacks: AuthenticationCallbacks) => Promise<void>;
+       *   connect: (config: ConnectionConfig) => Promise<Connection>;
+       *   setLogLevel: (level: "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR" | "SILENT") => void
+       * }} Dcv
+       */
+
+      /** @type {Dcv} */
+      const dcv = window["dcv"];
+
+      // disable all logs
+      dcv.setLogLevel("SILENT");
+
+      const divId = "dcv-display";
+      const div = document.getElementById(divId);
+
+      class DcvManager {
+        /** @type {Config} */
+        config;
+
+        /** @type {Connection|null} */
+        connection;
+
+        /** @type {boolean} */
+        displayLayoutRequested;
+
+        /**
+         * @param {Config} config
+         */
+        constructor(config) {
+          this.config = config;
+          this.connection = null;
+          this.displayLayoutRequested = false;
+        }
+
+        httpExtraSearchParamsCallBack() {
+          try {
+            const { searchParams } = new URL(this.config.presignedUrl);
+            return searchParams;
+          } catch {
+            return new URLSearchParams();
+          }
+        }
+
+        displayLayoutCallback = () => {
+          const { width, height } = this.config;
+          if (div && width > 0 && height > 0) {
+            div.style.maxWidth = `${width}px`;
+            div.style.maxHeight = `${height}px`;
+            div.style.aspectRatio = `${width} / ${height}`;
+          }
+
+          if (!this.displayLayoutRequested) {
+            this.connection?.requestDisplayLayout([
+              {
+                name: "Main Display",
+                rect: {
+                  x: 0,
+                  y: 0,
+                  width: width,
+                  height: height,
+                },
+                primary: true,
+              },
+            ]);
+
+            // only request display layout once
+            this.displayLayoutRequested = true;
+          }
+        };
+
+        connect(sessionId, authToken) {
+          return new Promise((resolve, reject) => {
+            dcv
+              .connect({
+                authToken,
+                baseUrl: "/dcvjs-umd",
+                divId,
+                enableChannels: ["display"], // no interactive => view only
+                sessionId,
+                url: this.config.presignedUrl,
+                callbacks: {
+                  firstFrame: () => resolve(this.connection),
+                  displayLayout: this.displayLayoutCallback.bind(this),
+                  httpExtraSearchParams:
+                    this.httpExtraSearchParamsCallBack.bind(this),
+                },
+              })
+              .then((c) => (this.connection = c))
+              .catch(reject);
+          });
+        }
+
+        async authenticate() {
+          return new Promise((resolve, reject) => {
+            dcv.authenticate(this.config.presignedUrl, {
+              promptCredentials: () => {}, // should not happen with presigned URL
+              error: (_auth, error) => reject(error),
+              success: (_, result) => {
+                if (result && result[0]) {
+                  const { sessionId, authToken } = result[0];
+                  this.connect(sessionId, authToken).then(resolve, reject);
+                } else {
+                  reject(new Error("No session data in auth result"));
+                }
+              },
+              httpExtraSearchParams:
+                this.httpExtraSearchParamsCallBack.bind(this),
+            });
+          });
+        }
+
+        disconnect() {
+          this.connection?.disconnect();
+          this.connection = null;
+        }
+      }
+
+      /**
+       * @return {Config|undefined}
+       */
+      function decodeConfig() {
+        const { hash } = window.location;
+        if (typeof hash === "string" && hash.startsWith("#")) {
+          try {
+            const decoded = atob(hash.slice(1));
+            const json = JSON.parse(decoded);
+            if (
+              typeof json === "object" &&
+              json !== "null" &&
+              typeof json.presignedUrl === "string" &&
+              typeof json.width === "number" &&
+              typeof json.height === "number"
+            ) {
+              return json;
+            }
+          } catch {
+            // ignore error
+          }
+        }
+        return undefined;
+      }
+
+      async function initialize() {
+        const config = decodeConfig();
+        if (typeof config === "undefined") {
+          return;
+        }
+
+        const viewer = new DcvManager(config);
+        window.addEventListener("beforeunload", () => viewer.disconnect());
+        await viewer.authenticate();
+      }
+
+      document.addEventListener("DOMContentLoaded", initialize);
+    </script>
+  </body>
+</html>
