@@ -1,0 +1,10 @@
+{
+  "devDependencies": {
+    "html-minifier-next": "^3.0.0",
+    "serve": "^14.2.5"
+  },
+  "scripts": {
+    "build": "html-minifier-next --config-file html-minifier-next.json --input-dir src --output-dir .",
+    "start": "npx serve"
+  }
+}

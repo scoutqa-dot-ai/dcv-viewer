@@ -1,0 +1,7 @@
+{
+  "collapseWhitespace": true,
+  "fileExt": "html",
+  "minifyCSS": true,
+  "minifyJS": true,
+  "removeComments": true
+}
