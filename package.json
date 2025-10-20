@@ -4,7 +4,7 @@
     "serve": "^14.2.5"
   },
   "scripts": {
-    "build": "html-minifier-next --config-file html-minifier-next.json --input-dir src --output-dir .",
-    "start": "npx serve"
+    "build": "rm -rf dist && html-minifier-next --config-file html-minifier-next.json --input-dir src --output-dir dist && cp -R ./dcvjs-umd ./dist/.",
+    "start": "npx serve dist"
   }
 }
