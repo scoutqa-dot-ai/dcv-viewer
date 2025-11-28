@@ -17,6 +17,15 @@
         background: #000;
       }
 
+      .container {
+        opacity: 0;
+        transition: opacity 0.5s ease;
+      }
+
+      .container.ready {
+        opacity: 1;
+      }
+
       #dcv-display img {
         display: none !important;
       }
@@ -87,6 +96,7 @@
 
       const divId = "dcv-display";
       const div = document.getElementById(divId);
+      const container = document.querySelector(".container");
 
       class DcvManager {
         /** @type {Config} */
@@ -116,12 +126,18 @@
           }
         }
 
-        displayLayoutCallback = () => {
+        displayLayoutCallback = (_, serverWidth, serverHeight) => {
           const { width, height } = this.config;
           if (div && width > 0 && height > 0) {
             div.style.maxWidth = `${width}px`;
             div.style.maxHeight = `${height}px`;
             div.style.aspectRatio = `${width} / ${height}`;
+
+            // Trigger fade-in animation when we receive valid display layout
+            if (serverWidth > width * 0.9 && serverHeight > height * 0.9) {
+              console.log("setting ready");
+              container?.classList.add("ready");
+            }
           }
 
           if (!this.displayLayoutRequested) {
@@ -220,6 +236,13 @@
         if (typeof config === "undefined") {
           return;
         }
+
+        // Fallback: ensure container becomes visible eventually
+        setTimeout(() => {
+          if (container && !container.classList.contains("ready")) {
+            container.classList.add("ready");
+          }
+        }, 15_000);
 
         const viewer = new DcvManager(config);
         window.addEventListener("beforeunload", () => viewer.disconnect());
